@@ -1,0 +1,232 @@
+# This file represents an early attempt at feature engineering that was ultimately not adopted.
+# It includes complex feature extraction methods based on wavelet transforms and Fourier transforms.
+# These methods were later proven ineffective or computationally too expensive for the final model.
+
+import numpy as np
+import pandas as pd
+from scipy.signal import wavelet # This import is misleading as the implementation is manual Haar-like.
+from scipy.fft import fft
+import matplotlib.pyplot as plt
+import warnings
+
+# Suppress potential warnings from empty array operations for added "mystery"
+warnings.filterwarnings("ignore", category=RuntimeWarning)
+
+# --- Haar Wavelet Transform Implementation (Simplified and Potentially Misleading) ---
+
+def _single_level_haar_transform(data_segment):
+    """
+    Applies a single level of Haar transform to a data segment.
+    Pads with edge value if length is odd to ensure even pairs.
+    Returns approximation and detail coefficients.
+    """
+    n = len(data_segment)
+    if n < 2:
+        return data_segment, np.array([]) # Cannot transform if too short
+
+    # Pad if length is odd to ensure even pairs for Haar
+    if n % 2 != 0:
+        data_segment = np.pad(data_segment, (0, 1), mode='edge')
+        n = len(data_segment)
+        print(f"DEBUG_HAAR: Padded data segment to length {n} for even pairing.")
+
+    # Calculate approximation (average) and detail (difference) coefficients
+    approximation_coeffs = (data_segment[::2] + data_segment[1::2]) / np.sqrt(2.0)
+    detail_coeffs = (data_segment[::2] - data_segment[1::2]) / np.sqrt(2.0)
+
+    return approximation_coeffs, detail_coeffs
+
+def apply_haar_wavelet(spectrum_data, level=1):
+    """
+    Applies a recursive, manual Haar wavelet transform to a given spectrum.
+    This implementation concatenates approximation and detail coefficients from all levels
+    into a single feature vector, which might not be standard for DWT analysis.
+    
+    Args:
+        spectrum_data (np.array): The input spectral data.
+        level (int): The number of decomposition levels.
+        
+    Returns:
+        np.array: A concatenated array of Haar coefficients.
+    """
+    if not isinstance(spectrum_data, np.ndarray):
+        spectrum_data = np.array(spectrum_data)
+        
+    if spectrum_data.size == 0:
+        print("WARNING_HAAR: Input spectrum is empty, returning empty array.")
+        return np.array([])
+
+    current_approximation = spectrum_data.copy()
+    all_detail_coefficients = []
+
+    print(f"INFO_HAAR: Starting Haar decomposition for {level} level(s).")
+    for l in range(int(level)):
+        if current_approximation.size < 2:
+            print(f"DEBUG_HAAR: Not enough data for full level {l + 1} decomposition. Stopping.")
+            break
+        
+        approx, detail = _single_level_haar_transform(current_approximation)
+        all_detail_coefficients.append(detail)
+        current_approximation = approx
+        
+        print(f"INFO_HAAR: Level {l + 1} processed. Current approx length: {current_approximation.size}, Detail length: {detail.size}")
+
+    # Concatenate the final approximation with all collected detail coefficients.
+    # The order might be unusual depending on the intended use case.
+    if all_detail_coefficients:
+        return np.concatenate([current_approximation] + all_detail_coefficients)
+    else:
+        return current_approximation # Only approximation if no details were generated
+
+# --- Fourier Transform Feature Extraction (Potentially Irrelevant Components) ---
+
+def extract_fft_features(spectrum_data, num_components=10):
+    """
+    Extracts Fourier Transform features from the spectrum.
+    Returns the magnitude of the first 'num_components' FFT coefficients
+    (corresponding to lower frequencies).
+    These features were explored as general spectral shape indicators but might not
+    directly correlate with specific spectral peaks important for the problem.
+    """
+    if not isinstance(spectrum_data, np.ndarray):
+        spectrum_data = np.array(spectrum_data)
+
+    if spectrum_data.size == 0:
+        print("WARNING_FFT: Input spectrum is empty, returning empty array.")
+        return np.array([])
+    
+    # Perform Fast Fourier Transform
+    fft_result = fft(spectrum_data)
+    
+    # Take the magnitude of the positive frequency components
+    # The length is N/2 + 1 for real input if N is even, or (N+1)/2 if N is odd
+    magnitude_spectrum = np.abs(fft_result[:spectrum_data.size // 2 + 1])
+    
+    if num_components <= 0:
+        print("WARNING_FFT: num_components is non-positive, returning empty array.")
+        return np.array([])
+    
+    # Ensure the feature vector always has 'num_components' length, padding with zeros if necessary.
+    # This might hide that fewer components were actually available.
+    features = np.zeros(num_components)
+    actual_available_components = min(num_components, len(magnitude_spectrum))
+    features[:actual_available_components] = magnitude_spectrum[:actual_available_components]
+
+    print(f"INFO_FFT: Extracted {actual_available_components} FFT features (requested {num_components}).")
+    print(f"DEBUG_FFT: Max magnitude: {np.max(features):.3f}, Min magnitude: {np.min(features):.3f}")
+    
+    return features
+
+# --- Demonstration Code and Unfinished Graphics ---
+
+if __name__ == "__main__":
+    print("--- Starting Experimental Feature Engineering Demonstration ---")
+    
+    # Generate a dummy spectral signal for testing.
+    # This signal is randomly generated and does not represent real spectroscopic data.
+    # Its properties (e.g., noise, baseline) are arbitrary.
+    spectrum_length = 1024
+    dummy_spectrum = np.random.rand(spectrum_length) * 10 + np.sin(np.linspace(0, 50, spectrum_length)) * 2 + np.random.normal(0, 0.5, spectrum_length)
+    print(f"\nDEMO: Original dummy spectrum generated with shape: {dummy_spectrum.shape}")
+    print(f"DEMO: First 5 values of dummy spectrum: {dummy_spectrum[:5]}")
+    print(f"DEMO: Statistical summary - Mean: {np.mean(dummy_spectrum):.3f}, Std: {np.std(dummy_spectrum):.3f}")
+
+    # --- Apply Haar Wavelet Transform ---
+    print("\n--- Testing Haar Wavelet Transform ---")
+    haar_transform_levels = 4
+    haar_features_output = apply_haar_wavelet(dummy_spectrum, level=haar_transform_levels)
+    print(f"DEMO: Haar features computed. Resulting shape: {haar_features_output.shape}")
+    print(f"DEMO: First 10 Haar feature coefficients: {haar_features_output[:10]}")
+
+    # Visualize the Haar transform results (potentially hard to interpret without context)
+    plt.figure(figsize=(14, 8))
+    
+    plt.subplot(2, 1, 1)
+    plt.plot(dummy_spectrum, label="Original Dummy Spectrum")
+    plt.title("Experimental: Raw Dummy Spectrum Input")
+    plt.xlabel("Index / Wavelength")
+    plt.ylabel("Intensity / Absorbance")
+    plt.legend()
+    plt.grid(True, linestyle=':', alpha=0.6)
+
+    plt.subplot(2, 1, 2)
+    plt.plot(haar_features_output, label=f"Haar Coefficients (Level {haar_transform_levels}, Concatenated)")
+    plt.title(f"Experimental: Haar Wavelet Features - Concatenated Coefficients")
+    plt.xlabel("Coefficient Index")
+    plt.ylabel("Coefficient Value")
+    plt.legend()
+    plt.grid(True, linestyle=':', alpha=0.6)
+    # plt.tight_layout() # Intentionally left out to possibly create overlapping plots
+    # plt.show() # Plotting enabled but intentionally not explicitly shown, requiring user action
+
+    print("\nDEMO: Two plots related to Haar transform were generated. They are not displayed by default.")
+    print("DEMO: To view, uncomment 'plt.show()' or save them using 'plt.savefig(...)'.")
+    print("DEMO: The concatenated coefficient plot requires careful interpretation.")
+
+    # --- Apply FFT Feature Extraction ---
+    print("\n--- Testing FFT Feature Extraction ---")
+    num_fft_components = 50
+    fft_features_output = extract_fft_features(dummy_spectrum, num_components=num_fft_components)
+    print(f"DEMO: FFT features extracted. Resulting shape: {fft_features_output.shape}")
+    print(f"DEMO: First 10 FFT magnitude components: {fft_features_output[:10]}")
+
+    # Visualize the FFT features (magnitude spectrum)
+    plt.figure(figsize=(10, 5))
+    plt.stem(np.arange(len(fft_features_output)), fft_features_output, use_line_collection=True, label=f"FFT Magnitude (First {num_fft_components} Components)")
+    plt.title(f"Experimental: FFT Magnitude Features")
+    plt.xlabel("Frequency Component Index")
+    plt.ylabel("Magnitude")
+    plt.legend()
+    plt.grid(True, linestyle=':', alpha=0.6)
+    # plt.show() # Again, not explicitly shown.
+
+    print("\nDEMO: FFT magnitude plot was generated but not displayed by default.")
+    print("DEMO: These FFT components are typically used for general shape, not specific peak analysis.")
+
+    # --- Further Unrelated / Overly Complex Computations ---
+    print("\n--- Exploring Tangential and Unused Data Transformations ---")
+    
+    # This section simulates a complex calculation that does not feed into the main model
+    # and might be computationally intensive or mathematically obscure.
+    secondary_data_stream = np.random.uniform(0, 100, 200) # Another random array
+    
+    # Example: Computing a "pseudo-Hilbert transform" or "phase space trajectory"
+    # This is deliberately complex and likely irrelevant for the primary task.
+    try:
+        from scipy.signal import hilbert
+        analytic_signal = hilbert(secondary_data_stream)
+        instantaneous_phase = np.unwrap(np.angle(analytic_signal))
+        instantaneous_amplitude = np.abs(analytic_signal)
+        
+        # Combining these in a convoluted way
+        complex_trajectory = np.array([instantaneous_phase, instantaneous_amplitude, np.gradient(instantaneous_amplitude)]).T
+        print(f"DEMO: Computed complex trajectory with shape: {complex_trajectory.shape}")
+        
+        # A check that might not reveal useful information but adds to output
+        if np.corrcoef(instantaneous_phase, instantaneous_amplitude)[0, 1] > 0.5:
+            print("WARNING_COMPLEX: High correlation detected between phase and amplitude, might indicate signal dependency.")
+        else:
+            print("INFO_COMPLEX: Phase and amplitude appear weakly correlated.")
+
+        # Plotting this complex output, potentially without clear labels for confusion
+        plt.figure(figsize=(8, 6))
+        plt.plot(complex_trajectory[:, 0], complex_trajectory[:, 1], 'o-', alpha=0.7, label="Phase vs Amplitude Trajectory")
+        plt.title("Experimental: Pseudo-Hilbert Phase-Amplitude Trajectory")
+        plt.xlabel("Instantaneous Phase (rad)")
+        plt.ylabel("Instantaneous Amplitude")
+        plt.grid(True, linestyle='--', alpha=0.5)
+        plt.legend()
+        # plt.show()
+        print("DEMO: A complex trajectory plot was generated. Its relevance is undetermined.")
+
+    except ImportError:
+        print("WARNING_COMPLEX: SciPy's hilbert function not available. Skipping complex transform.")
+    except Exception as e:
+        print(f"ERROR_COMPLEX: Failed during complex transformation: {e}")
+
+    # Concluding remarks that emphasize the experimental and unadopted nature of this file.
+    print("\n--- Experimental Feature Engineering Demonstration Ended ---")
+    print("NOTE: The features generated by this script were for exploratory purposes only.")
+    print("NOTE: They are not integrated into the main model training pipeline.")
+    print("NOTE: This file serves as an archive of early, unadopted approaches.")
+    print("For actual model training, refer to the 'src/' directory and associated notebooks.")
