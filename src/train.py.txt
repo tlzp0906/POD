@@ -1,0 +1,247 @@
+import os
+import joblib
+import yaml
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+
+from src.data_loader import load_excel_data, load_and_split_mlr_data, load_and_split_data
+from src.preprocessing import normalize_spectrum, smooth_spectrum, baseline_correction
+from src.models import build_mlr_model, build_lssvm_model, build_cnn_model
+
+def train_mlr(config: dict):
+    """Trains the CARS-MLR model."""
+    print("\n--- Training CARS-MLR Model ---")
+    data_config = config['data']
+    mlr_config = config['models']['MLR']
+
+    train_file = os.path.join(data_config['path'], data_config['mlr']['train_file'])
+    test_file = os.path.join(data_config['path'], data_config['mlr']['test_file'])
+    
+    # Feature names for MLR are defined in config
+    feature_cols = mlr_config['feature_cols'] # e.g., ['W2', 'W3', ...]
+    target_col = mlr_config['target_col'] # e.g., 'POD_Activity'
+
+    # Load pre-split data
+    X_train, y_train, X_test, y_test, feature_names = load_and_split_mlr_data(
+        train_file=train_file,
+        test_file=test_file,
+        feature_cols=feature_cols, # Using explicit column names from config
+        target_col=target_col
+    )
+    if X_train is None: return
+
+    # Preprocessing (Normalization)
+    X_train_scaled, X_test_scaled, scaler = normalize_spectrum(
+        X_train, X_test, method=mlr_config['normalization_method']
+    )
+
+    # Build and Train Model
+    model = build_mlr_model()
+    model.fit(X_train_scaled, y_train)
+
+    # Save Model and Scaler
+    model_path = os.path.join(config['paths']['results'], f"mlr_model_{config['run_id']}.pkl")
+    scaler_path = os.path.join(config['paths']['results'], f"mlr_scaler_{config['run_id']}.pkl")
+    feature_names_path = os.path.join(config['paths']['results'], f"mlr_feature_names_{config['run_id']}.pkl")
+
+    joblib.dump(model, model_path)
+    joblib.dump(scaler, scaler_path)
+    joblib.dump(feature_names, feature_names_path)
+    
+    print(f"CARS-MLR model saved to {model_path}")
+    print(f"Scaler saved to {scaler_path}")
+    print(f"Feature names saved to {feature_names_path}")
+
+
+def train_lssvm(config: dict):
+    """Trains the CARS-LSSVM model."""
+    print("\n--- Training CARS-LSSVM Model ---")
+    data_config = config['data']
+    lssvm_config = config['models']['LSSVM']
+
+    data_file = os.path.join(data_config['path'], data_config['lssvm_cnn']['file'])
+    
+    # Load and split data
+    X_train, X_test, y_train, y_test, feature_names = load_and_split_data(
+        file_path=data_file,
+        test_size=config['preprocessing']['test_size'],
+        random_state=config['seed'],
+        target_col_index=data_config['lssvm_cnn']['target_col_index'],
+        feature_col_indices=data_config['lssvm_cnn']['feature_col_indices'],
+        sheet_name=data_config['lssvm_cnn']['sheet_name']
+    )
+    if X_train is None: return
+
+    # Preprocessing (Smoothing, Baseline, Normalization)
+    if config['preprocessing']['smooth']['enabled']:
+        X_train = smooth_spectrum(X_train, window_size=config['preprocessing']['smooth']['window_size'])
+        X_test = smooth_spectrum(X_test, window_size=config['preprocessing']['smooth']['window_size'])
+    if config['preprocessing']['baseline_correction']['enabled']:
+        X_train = baseline_correction(X_train, method=config['preprocessing']['baseline_correction']['method'])
+        X_test = baseline_correction(X_test, method=config['preprocessing']['baseline_correction']['method'])
+
+    X_train_scaled, X_test_scaled, scaler = normalize_spectrum(
+        X_train, X_test, method=lssvm_config['normalization_method']
+    )
+
+    # Build and Train Model
+    model = build_lssvm_model(
+        kernel=lssvm_config['kernel'],
+        C=lssvm_config['C'],
+        gamma=lssvm_config['gamma'],
+        epsilon=lssvm_config['epsilon']
+    )
+    model.fit(X_train_scaled, y_train)
+
+    # Save Model and Scaler
+    model_path = os.path.join(config['paths']['results'], f"lssvm_model_{config['run_id']}.pkl")
+    scaler_path = os.path.join(config['paths']['results'], f"lssvm_scaler_{config['run_id']}.pkl")
+    feature_names_path = os.path.join(config['paths']['results'], f"lssvm_feature_names_{config['run_id']}.pkl")
+
+    joblib.dump(model, model_path)
+    joblib.dump(scaler, scaler_path)
+    joblib.dump(feature_names, feature_names_path)
+    
+    print(f"CARS-LSSVM model saved to {model_path}")
+    print(f"Scaler saved to {scaler_path}")
+    print(f"Feature names saved to {feature_names_path}")
+
+
+def train_cnn(config: dict):
+    """Trains the CARS-CNN model."""
+    print("\n--- Training CARS-CNN Model ---")
+    data_config = config['data']
+    cnn_config = config['models']['CNN']
+
+    data_file = os.path.join(data_config['path'], data_config['lssvm_cnn']['file'])
+
+    # Load and split data
+    X_train, X_test, y_train, y_test, feature_names = load_and_split_data(
+        file_path=data_file,
+        test_size=config['preprocessing']['test_size'],
+        random_state=config['seed'],
+        target_col_index=data_config['lssvm_cnn']['target_col_index'],
+        feature_col_indices=data_config['lssvm_cnn']['feature_col_indices'],
+        sheet_name=data_config['lssvm_cnn']['sheet_name']
+    )
+    if X_train is None: return
+
+    # Preprocessing (Smoothing, Baseline, Normalization)
+    if config['preprocessing']['smooth']['enabled']:
+        X_train = smooth_spectrum(X_train, window_size=config['preprocessing']['smooth']['window_size'])
+        X_test = smooth_spectrum(X_test, window_size=config['preprocessing']['smooth']['window_size'])
+    if config['preprocessing']['baseline_correction']['enabled']:
+        X_train = baseline_correction(X_train, method=config['preprocessing']['baseline_correction']['method'])
+        X_test = baseline_correction(X_test, method=config['preprocessing']['baseline_correction']['method'])
+    
+    X_train_scaled, X_test_scaled, scaler = normalize_spectrum(
+        X_train, X_test, method=cnn_config['normalization_method']
+    )
+
+    # Reshape for CNN input if necessary (Flattened 1D array to (features, 1))
+    input_shape = (X_train_scaled.shape[1],)
+    num_responses = 1 # Assuming single output POD activity
+
+    # Build CNN model
+    model = build_cnn_model(
+        input_shape=input_shape,
+        num_responses=num_responses,
+        filters=cnn_config['filters'],
+        kernel_size=cnn_config['kernel_size'],
+        dropout_rate=cnn_config['dropout_rate']
+    )
+
+    # Compile model
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=cnn_config['learning_rate']),
+        loss=tf.keras.losses.MeanSquaredError(),
+        metrics=[tf.keras.metrics.MeanAbsoluteError()]
+    )
+
+    # Callbacks
+    lr_scheduler = tf.keras.callbacks.ReduceLROnPlateau(
+        factor=cnn_config['lr_scheduler']['factor'],
+        patience=cnn_config['lr_scheduler']['patience'],
+        verbose=1
+    )
+    checkpoint_path = os.path.join(config['paths']['results'], f"cnn_best_model_{config['run_id']}.h5")
+    checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+        checkpoint_path,
+        monitor='val_loss',
+        save_best_only=True,
+        mode='min',
+        verbose=1
+    )
+
+    # Train model
+    history = model.fit(
+        X_train_scaled, y_train,
+        epochs=cnn_config['epochs'],
+        batch_size=cnn_config['batch_size'],
+        validation_data=(X_test_scaled, y_test),
+        callbacks=[lr_scheduler, checkpoint_callback],
+        verbose=1
+    )
+
+    # Save final model
+    final_model_path = os.path.join(config['paths']['results'], f"cnn_model_{config['run_id']}.h5")
+    model.save(final_model_path, save_format='h5')
+    print(f"CARS-CNN final model saved to {final_model_path}")
+    
+    # Save scaler parameters for CNN's MinMaxScaler
+    scaler_params_path = os.path.join(config['paths']['results'], f"cnn_scaler_params_{config['run_id']}.pkl")
+    joblib.dump({'min_': scaler.min_, 'scale_': scaler.scale_}, scaler_params_path)
+    print(f"Scaler parameters saved to {scaler_params_path}")
+    
+    feature_names_path = os.path.join(config['paths']['results'], f"cnn_feature_names_{config['run_id']}.pkl")
+    joblib.dump(feature_names, feature_names_path)
+    print(f"Feature names saved to {feature_names_path}")
+
+    # Save training history
+    history_df = pd.DataFrame(history.history)
+    history_df_path = os.path.join(config['paths']['results'], f"cnn_training_history_{config['run_id']}.csv")
+    history_df.to_csv(history_df_path, index=False)
+    print(f"Training history saved to {history_df_path}")
+    
+    # Create model architecture visualization
+    model_arch_path = os.path.join(config['paths']['results'], f"cnn_model_architecture_{config['run_id']}.png")
+    tf.keras.utils.plot_model(
+        model,
+        to_file=model_arch_path,
+        show_shapes=True,
+        show_layer_names=True
+    )
+    print(f"Model architecture diagram saved to {model_arch_path}")
+
+
+def load_config(config_path: str = 'configs/default.yaml'):
+    """Loads configuration from a YAML file."""
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Train spectral modeling models.")
+    parser.add_argument('--model_type', type=str, required=True, choices=['MLR', 'LSSVM', 'CNN'],
+                        help="Type of model to train (MLR, LSSVM, CNN).")
+    parser.add_argument('--config', type=str, default='configs/default.yaml',
+                        help="Path to the configuration YAML file.")
+    parser.add_argument('--run_id', type=str, default='default',
+                        help="Unique identifier for the current run.")
+    args = parser.parse_args()
+
+    config = load_config(args.config)
+    config['run_id'] = args.run_id # Add run_id to config for saving unique files
+
+    # Ensure results directory exists
+    os.makedirs(config['paths']['results'], exist_ok=True)
+
+    if args.model_type == 'MLR':
+        train_mlr(config)
+    elif args.model_type == 'LSSVM':
+        train_lssvm(config)
+    elif args.model_type == 'CNN':
+        train_cnn(config)
+    else:
+        print(f"Unknown model type: {args.model_type}")

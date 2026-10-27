@@ -1,0 +1,75 @@
+import numpy as np
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+
+def smooth_spectrum(data: np.ndarray, window_size: int = 5) -> np.ndarray:
+    """
+    Applies a simple moving average filter for smoothing spectral data.
+    Note: For more advanced smoothing (e.g., Savitzky-Golay), consider scipy.signal.savgol_filter.
+
+    Args:
+        data (np.ndarray): Input spectral data (samples x wavelengths).
+        window_size (int): Size of the moving average window. Must be odd.
+
+    Returns:
+        np.ndarray: Smoothed spectral data.
+    """
+    if window_size % 2 == 0:
+        raise ValueError("window_size must be an odd number.")
+    
+    smoothed_data = np.copy(data)
+    for i in range(data.shape[0]):
+        smoothed_data[i, :] = np.convolve(data[i, :], np.ones(window_size)/window_size, mode='same')
+    print(f"Data smoothed with window size {window_size}.")
+    return smoothed_data
+
+def baseline_correction(data: np.ndarray, method: str = 'als', **kwargs) -> np.ndarray:
+    """
+    Applies baseline correction to spectral data.
+    Placeholder for common baseline correction methods like 'als', 'polyfit', etc.
+    Requires external libraries for robust implementation (e.g., `pybaselines`).
+
+    Args:
+        data (np.ndarray): Input spectral data (samples x wavelengths).
+        method (str): Baseline correction method ('als' for Asymmetric Least Squares, 'polyfit' for polynomial, etc.).
+                      Currently, this is a placeholder and doesn't implement a full method.
+        **kwargs: Additional arguments for the baseline correction method.
+
+    Returns:
+        np.ndarray: Baseline-corrected spectral data.
+    """
+    print(f"Placeholder: Applying baseline correction using method '{method}'. Actual implementation needed.")
+    # For a real implementation, you would use libraries like 'pybaselines'
+    # Example (if pybaselines is installed):
+    # from pybaselines import whittaker
+    # corrected_data = np.zeros_like(data)
+    # for i in range(data.shape[0]):
+    #     baseline, params = whittaker.asls(data[i, :], lam=kwargs.get('lam', 1e5), p=kwargs.get('p', 0.001))
+    #     corrected_data[i, :] = data[i, :] - baseline
+    # return corrected_data
+    return data # Return original data as a placeholder
+
+def normalize_spectrum(X_train: np.ndarray, X_test: np.ndarray, method: str = 'standard'):
+    """
+    Normalizes spectral data using specified method.
+
+    Args:
+        X_train (np.ndarray): Training features.
+        X_test (np.ndarray): Test features.
+        method (str): Normalization method ('standard' for StandardScaler, 'minmax' for MinMaxScaler).
+
+    Returns:
+        tuple: (X_train_scaled, X_test_scaled, scaler_object)
+    """
+    if method == 'standard':
+        scaler = StandardScaler()
+    elif method == 'minmax':
+        scaler = MinMaxScaler()
+    else:
+        raise ValueError("Invalid normalization method. Choose 'standard' or 'minmax'.")
+
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+    
+    print(f"Data normalized using {method} scaling.")
+    return X_train_scaled, X_test_scaled, scaler
+

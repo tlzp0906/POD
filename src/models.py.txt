@@ -1,0 +1,98 @@
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.svm import SVR # Using SVR as a proxy for LSSVM
+from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Dense, Dropout, Input
+from tensorflow.keras.optimizers import Adam
+import tensorflow as tf
+
+# Suppress TensorFlow warnings
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+
+def build_mlr_model():
+    """
+    Builds a Multiple Linear Regression model.
+    """
+    model = LinearRegression()
+    print("Multiple Linear Regression model created.")
+    return model
+
+def build_lssvm_model(C=1.0, epsilon=0.1, kernel='rbf', gamma='scale'):
+    """
+    Builds an SVR model as a proxy for LSSVM.
+    LSSVM (Least Squares Support Vector Machine) is not directly available in scikit-learn.
+    SVR (Support Vector Regressor) is a common alternative for similar tasks.
+    If you have a specific LSSVM implementation, please replace this.
+
+    Args:
+        C (float): Regularization parameter. The strength of the regularization is inversely
+                   proportional to C. Must be strictly positive.
+        epsilon (float): Epsilon in the epsilon-SVR model. Specifies the epsilon-tube within which
+                         no penalty is associated in the training loss function with points
+                         predicted within a distance epsilon from the actual value.
+        kernel (str): Specifies the kernel type to be used in the algorithm. 'linear', 'poly', 'rbf', 'sigmoid'.
+        gamma (str or float): Kernel coefficient for 'rbf', 'poly' and 'sigmoid'.
+                              'scale' (default) is 1 / (n_features * X.var()) or 'auto' 1 / n_features.
+    """
+    model = SVR(C=C, epsilon=epsilon, kernel=kernel, gamma=gamma)
+    print(f"SVR model (proxy for LSSVM) created with C={C}, epsilon={epsilon}, kernel={kernel}.")
+    return model
+
+def build_cnn_model(input_shape, num_filters=64, kernel_size=5, pool_size=2, dropout_rate=0.5, learning_rate=0.001):
+    """
+    Builds a 1D Convolutional Neural Network (CNN) model for spectral data.
+    Input shape is (num_features, 1) for a single sample.
+
+    Args:
+        input_shape (tuple): Shape of the input data (num_features, 1).
+        num_filters (int): Number of convolutional filters.
+        kernel_size (int): Size of the convolutional kernel.
+        pool_size (int): Size of the pooling window.
+        dropout_rate (float): Dropout rate for regularization.
+        learning_rate (float): Learning rate for the Adam optimizer.
+
+    Returns:
+        tf.keras.Model: Compiled Keras CNN model.
+    """
+    model = Sequential([
+        Input(shape=input_shape),
+        Conv1D(filters=num_filters, kernel_size=kernel_size, activation='relu', padding='same'),
+        MaxPooling1D(pool_size=pool_size, padding='same'),
+        Dropout(dropout_rate),
+        Conv1D(filters=num_filters // 2, kernel_size=kernel_size, activation='relu', padding='same'),
+        MaxPooling1D(pool_size=pool_size, padding='same'),
+        Dropout(dropout_rate),
+        Flatten(),
+        Dense(64, activation='relu'),
+        Dropout(dropout_rate),
+        Dense(1) # Output layer for regression
+    ])
+
+    optimizer = Adam(learning_rate=learning_rate)
+    model.compile(optimizer=optimizer, loss='mse', metrics=['mae', 'mse'])
+    print(f"1D CNN model created with input_shape={input_shape}.")
+    model.summary()
+    return model
+
+if __name__ == '__main__':
+    # Example usage for each model
+    num_features = 50 # Assuming CARS selected 50 features
+
+    print("--- Testing MLR Model ---")
+    mlr_model = build_mlr_model()
+    dummy_X = np.random.rand(10, num_features)
+    dummy_y = np.random.rand(10)
+    mlr_model.fit(dummy_X, dummy_y)
+    print(f"MLR model fitted. First prediction: {mlr_model.predict(dummy_X[:1,:])[0]:.2f}")
+
+    print("\n--- Testing LSSVM (SVR Proxy) Model ---")
+    lssvm_model = build_lssvm_model()
+    lssvm_model.fit(dummy_X, dummy_y)
+    print(f"SVR model fitted. First prediction: {lssvm_model.predict(dummy_X[:1,:])[0]:.2f}")
+
+    print("\n--- Testing CNN Model ---")
+    # For CNN, input data needs to be 3D: (num_samples, num_features, 1)
+    dummy_X_cnn = np.random.rand(10, num_features, 1)
+    cnn_model = build_cnn_model(input_shape=(num_features, 1))
+    cnn_model.fit(dummy_X_cnn, dummy_y, epochs=1, batch_size=2, verbose=0)
+    print(f"CNN model fitted. First prediction: {cnn_model.predict(dummy_X_cnn[:1,:])[0,0]:.2f}")

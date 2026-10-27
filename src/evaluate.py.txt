@@ -1,0 +1,383 @@
+import os
+import joblib
+import yaml
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+import matplotlib.pyplot as plt
+from sklearn.metrics import mean_squared_error, r2_score
+import shap
+import warnings
+
+# Suppress specific warnings from sklearn/tensorflow
+warnings.filterwarnings('ignore', category=UserWarning, module='shap')
+warnings.filterwarnings('ignore', category=FutureWarning, module='tensorflow')
+warnings.filterwarnings('ignore', category=UserWarning, module='tensorflow')
+
+from src.data_loader import load_excel_data, load_and_split_mlr_data, load_and_split_data
+from src.preprocessing import normalize_spectrum, smooth_spectrum, baseline_correction
+from src.models import build_mlr_model, build_lssvm_model, build_cnn_model # Used for re-creating model architecture
+
+def calculate_metrics(y_true: np.ndarray, y_pred: np.ndarray, prefix: str = "") -> dict:
+    """Calculates common regression metrics."""
+    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    r2 = r2_score(y_true, y_pred)
+    metrics = {
+        f"{prefix}RMSE": rmse,
+        f"{prefix}R2": r2
+    }
+    return metrics
+
+def plot_predictions(y_true: np.ndarray, y_pred: np.ndarray, title: str, save_path: str):
+    """Plots true vs. predicted values."""
+    plt.figure(figsize=(8, 6))
+    plt.scatter(y_true, y_pred, alpha=0.6)
+    plt.plot([min(y_true), max(y_true)], [min(y_true), max(y_true)], 'r--', lw=2)
+    plt.xlabel("True Values")
+    plt.ylabel("Predicted Values")
+    plt.title(title)
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+    print(f"Prediction plot saved to {save_path}")
+
+def plot_shap_summary(shap_values, X, feature_names, plot_type: str, title: str, save_path: str):
+    """Generates and saves SHAP summary plots."""
+    shap.summary_plot(shap_values, X, feature_names=feature_names, plot_type=plot_type, show=False)
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+    print(f"SHAP {plot_type} plot saved to {save_path}")
+
+def evaluate_mlr(config: dict):
+    """Evaluates the CARS-MLR model and performs SHAP analysis."""
+    print("\n--- Evaluating CARS-MLR Model ---")
+    data_config = config['data']
+    mlr_config = config['models']['MLR']
+    results_dir = config['paths']['results']
+    run_id = config['run_id']
+
+    # Load data
+    train_file = os.path.join(data_config['path'], data_config['mlr']['train_file'])
+    test_file = os.path.join(data_config['path'], data_config['mlr']['test_file'])
+    
+    feature_cols = mlr_config['feature_cols']
+    target_col = mlr_config['target_col']
+
+    X_train, y_train, X_test, y_test, feature_names = load_and_split_mlr_data(
+        train_file=train_file,
+        test_file=test_file,
+        feature_cols=feature_cols,
+        target_col=target_col
+    )
+    if X_train is None: return
+
+    # Load model and scaler
+    model_path = os.path.join(results_dir, f"mlr_model_{run_id}.pkl")
+    scaler_path = os.path.join(results_dir, f"mlr_scaler_{run_id}.pkl")
+    feature_names_path = os.path.join(results_dir, f"mlr_feature_names_{run_id}.pkl")
+
+    try:
+        model = joblib.load(model_path)
+        scaler = joblib.load(scaler_path)
+        loaded_feature_names = joblib.load(feature_names_path)
+        if feature_names != loaded_feature_names:
+            print("Warning: Feature names in config do not match saved feature names.")
+            feature_names = loaded_feature_names
+        print(f"Loaded CARS-MLR model from {model_path}")
+    except FileNotFoundError:
+        print(f"Error: MLR model or scaler not found for run_id {run_id}. Please train it first.")
+        return
+
+    # Preprocessing (Normalization)
+    X_train_scaled = scaler.transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+
+    # Predictions
+    y_train_pred = model.predict(X_train_scaled)
+    y_test_pred = model.predict(X_test_scaled)
+
+    # Metrics
+    train_metrics = calculate_metrics(y_train, y_train_pred, prefix="Train_")
+    test_metrics = calculate_metrics(y_test, y_test_pred, prefix="Test_")
+    print("\nMLR Model Evaluation:")
+    for k, v in {**train_metrics, **test_metrics}.items():
+        print(f"{k}: {v:.4f}")
+    
+    # Save metrics
+    metrics_df = pd.DataFrame([train_metrics, test_metrics])
+    metrics_path = os.path.join(results_dir, f"mlr_metrics_{run_id}.csv")
+    metrics_df.to_csv(metrics_path, index=False)
+    print(f"Metrics saved to {metrics_path}")
+
+    # Plot predictions
+    plot_predictions(y_train, y_train_pred, f"MLR Train Predictions (Run ID: {run_id})",
+                     os.path.join(results_dir, f"mlr_train_predictions_{run_id}.png"))
+    plot_predictions(y_test, y_test_pred, f"MLR Test Predictions (Run ID: {run_id})",
+                     os.path.join(results_dir, f"mlr_test_predictions_{run_id}.png"))
+
+    # SHAP Analysis
+    print("\n--- Performing SHAP Analysis for CARS-MLR ---")
+    explainer = shap.LinearExplainer(model, X_train_scaled) # LinearExplainer for linear models
+    
+    # Calculate SHAP values for a subset of test data
+    shap_values_test = explainer.shap_values(X_test_scaled)
+
+    # Plot SHAP summary (bar plot)
+    plot_shap_summary(shap_values_test, X_test_scaled, feature_names, "bar",
+                      f"MLR SHAP Feature Importance (Run ID: {run_id})",
+                      os.path.join(results_dir, f"mlr_shap_importance_{run_id}.png"))
+
+    # Plot SHAP summary (dot plot)
+    plot_shap_summary(shap_values_test, X_test_scaled, feature_names, "dot",
+                      f"MLR SHAP Summary (Run ID: {run_id})",
+                      os.path.join(results_dir, f"mlr_shap_summary_{run_id}.png"))
+
+    # Optional: Plot force plot for a single instance
+    # if X_test_scaled.shape[0] > 0:
+    #     shap.initjs() # For JS visualization in notebooks
+    #     idx = 0
+    #     plt.figure()
+    #     shap.force_plot(explainer.expected_value, shap_values_test[idx], X_test_scaled[idx], 
+    #                     feature_names=feature_names, matplotlib=True, show=False)
+    #     plt.title(f"MLR SHAP Force Plot - Sample {idx} (Run ID: {run_id})")
+    #     plt.tight_layout()
+    #     plt.savefig(os.path.join(results_dir, f"mlr_shap_force_sample_{idx}_{run_id}.png"))
+    #     plt.close()
+    #     print(f"SHAP force plot for sample {idx} saved.")
+
+
+def evaluate_lssvm(config: dict):
+    """Evaluates the CARS-LSSVM model and performs SHAP analysis."""
+    print("\n--- Evaluating CARS-LSSVM Model ---")
+    data_config = config['data']
+    lssvm_config = config['models']['LSSVM']
+    results_dir = config['paths']['results']
+    run_id = config['run_id']
+
+    # Load data
+    data_file = os.path.join(data_config['path'], data_config['lssvm_cnn']['file'])
+    X_train, X_test, y_train, y_test, feature_names = load_and_split_data(
+        file_path=data_file,
+        test_size=config['preprocessing']['test_size'],
+        random_state=config['seed'],
+        target_col_index=data_config['lssvm_cnn']['target_col_index'],
+        feature_col_indices=data_config['lssvm_cnn']['feature_col_indices'],
+        sheet_name=data_config['lssvm_cnn']['sheet_name']
+    )
+    if X_train is None: return
+
+    # Load model and scaler
+    model_path = os.path.join(results_dir, f"lssvm_model_{run_id}.pkl")
+    scaler_path = os.path.join(results_dir, f"lssvm_scaler_{run_id}.pkl")
+    feature_names_path = os.path.join(results_dir, f"lssvm_feature_names_{run_id}.pkl")
+    
+    try:
+        model = joblib.load(model_path)
+        scaler = joblib.load(scaler_path)
+        loaded_feature_names = joblib.load(feature_names_path)
+        if feature_names != loaded_feature_names:
+            print("Warning: Feature names in config do not match saved feature names.")
+            feature_names = loaded_feature_names
+        print(f"Loaded CARS-LSSVM model from {model_path}")
+    except FileNotFoundError:
+        print(f"Error: LSSVM model or scaler not found for run_id {run_id}. Please train it first.")
+        return
+
+    # Preprocessing (Smoothing, Baseline, Normalization) - same as training
+    if config['preprocessing']['smooth']['enabled']:
+        X_train = smooth_spectrum(X_train, window_size=config['preprocessing']['smooth']['window_size'])
+        X_test = smooth_spectrum(X_test, window_size=config['preprocessing']['smooth']['window_size'])
+    if config['preprocessing']['baseline_correction']['enabled']:
+        X_train = baseline_correction(X_train, method=config['preprocessing']['baseline_correction']['method'])
+        X_test = baseline_correction(X_test, method=config['preprocessing']['baseline_correction']['method'])
+
+    X_train_scaled = scaler.transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+
+    # Predictions
+    y_train_pred = model.predict(X_train_scaled)
+    y_test_pred = model.predict(X_test_scaled)
+
+    # Metrics
+    train_metrics = calculate_metrics(y_train, y_train_pred, prefix="Train_")
+    test_metrics = calculate_metrics(y_test, y_test_pred, prefix="Test_")
+    print("\nLSSVM Model Evaluation:")
+    for k, v in {**train_metrics, **test_metrics}.items():
+        print(f"{k}: {v:.4f}")
+
+    # Save metrics
+    metrics_df = pd.DataFrame([train_metrics, test_metrics])
+    metrics_path = os.path.join(results_dir, f"lssvm_metrics_{run_id}.csv")
+    metrics_df.to_csv(metrics_path, index=False)
+    print(f"Metrics saved to {metrics_path}")
+
+    # Plot predictions
+    plot_predictions(y_train, y_train_pred, f"LSSVM Train Predictions (Run ID: {run_id})",
+                     os.path.join(results_dir, f"lssvm_train_predictions_{run_id}.png"))
+    plot_predictions(y_test, y_test_pred, f"LSSVM Test Predictions (Run ID: {run_id})",
+                     os.path.join(results_dir, f"lssvm_test_predictions_{run_id}.png"))
+
+    # SHAP Analysis
+    print("\n--- Performing SHAP Analysis for CARS-LSSVM ---")
+    # Using KernelExplainer for non-linear models like SVR
+    # Need to select a background dataset for KernelExplainer
+    # Use a small sample of the training data for faster computation
+    background_data_shap = X_train_scaled[np.random.choice(X_train_scaled.shape[0], min(100, X_train_scaled.shape[0]), replace=False)]
+    explainer = shap.KernelExplainer(model.predict, background_data_shap)
+    
+    # Calculate SHAP values for a subset of test data
+    # Limiting to 50-100 samples for reasonable computation time
+    num_shap_samples = min(X_test_scaled.shape[0], 100) 
+    shap_values_test = explainer.shap_values(X_test_scaled[:num_shap_samples])
+
+    # Plot SHAP summary (bar plot)
+    plot_shap_summary(shap_values_test, X_test_scaled[:num_shap_samples], feature_names, "bar",
+                      f"LSSVM SHAP Feature Importance (Run ID: {run_id})",
+                      os.path.join(results_dir, f"lssvm_shap_importance_{run_id}.png"))
+
+    # Plot SHAP summary (dot plot)
+    plot_shap_summary(shap_values_test, X_test_scaled[:num_shap_samples], feature_names, "dot",
+                      f"LSSVM SHAP Summary (Run ID: {run_id})",
+                      os.path.join(results_dir, f"lssvm_shap_summary_{run_id}.png"))
+
+def evaluate_cnn(config: dict):
+    """Evaluates the CARS-CNN model and performs SHAP analysis."""
+    print("\n--- Evaluating CARS-CNN Model ---")
+    data_config = config['data']
+    cnn_config = config['models']['CNN']
+    results_dir = config['paths']['results']
+    run_id = config['run_id']
+
+    # Load data
+    data_file = os.path.join(data_config['path'], data_config['lssvm_cnn']['file'])
+    X_train, X_test, y_train, y_test, feature_names = load_and_split_data(
+        file_path=data_file,
+        test_size=config['preprocessing']['test_size'],
+        random_state=config['seed'],
+        target_col_index=data_config['lssvm_cnn']['target_col_index'],
+        feature_col_indices=data_config['lssvm_cnn']['feature_col_indices'],
+        sheet_name=data_config['lssvm_cnn']['sheet_name']
+    )
+    if X_train is None: return
+
+    # Load model and scaler parameters
+    model_path = os.path.join(results_dir, f"cnn_model_{run_id}.h5")
+    scaler_params_path = os.path.join(results_dir, f"cnn_scaler_params_{run_id}.pkl")
+    feature_names_path = os.path.join(results_dir, f"cnn_feature_names_{run_id}.pkl")
+
+    try:
+        model = tf.keras.models.load_model(model_path)
+        scaler_params = joblib.load(scaler_params_path)
+        
+        # Manually reconstruct MinMaxScaler
+        from sklearn.preprocessing import MinMaxScaler
+        scaler = MinMaxScaler()
+        scaler.min_ = scaler_params['min_']
+        scaler.scale_ = scaler_params['scale_']
+
+        loaded_feature_names = joblib.load(feature_names_path)
+        if feature_names != loaded_feature_names:
+            print("Warning: Feature names in config do not match saved feature names.")
+            feature_names = loaded_feature_names
+        print(f"Loaded CARS-CNN model from {model_path}")
+    except FileNotFoundError:
+        print(f"Error: CNN model or scaler parameters not found for run_id {run_id}. Please train it first.")
+        return
+
+    # Preprocessing (Smoothing, Baseline, Normalization) - same as training
+    if config['preprocessing']['smooth']['enabled']:
+        X_train = smooth_spectrum(X_train, window_size=config['preprocessing']['smooth']['window_size'])
+        X_test = smooth_spectrum(X_test, window_size=config['preprocessing']['smooth']['window_size'])
+    if config['preprocessing']['baseline_correction']['enabled']:
+        X_train = baseline_correction(X_train, method=config['preprocessing']['baseline_correction']['method'])
+        X_test = baseline_correction(X_test, method=config['preprocessing']['baseline_correction']['method'])
+    
+    X_train_scaled = scaler.transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+
+    # Predictions
+    y_train_pred = model.predict(X_train_scaled).flatten()
+    y_test_pred = model.predict(X_test_scaled).flatten()
+
+    # Metrics
+    train_metrics = calculate_metrics(y_train, y_train_pred, prefix="Train_")
+    test_metrics = calculate_metrics(y_test, y_test_pred, prefix="Test_")
+    print("\nCNN Model Evaluation:")
+    for k, v in {**train_metrics, **test_metrics}.items():
+        print(f"{k}: {v:.4f}")
+
+    # Save metrics
+    metrics_df = pd.DataFrame([train_metrics, test_metrics])
+    metrics_path = os.path.join(results_dir, f"cnn_metrics_{run_id}.csv")
+    metrics_df.to_csv(metrics_path, index=False)
+    print(f"Metrics saved to {metrics_path}")
+
+    # Plot predictions
+    plot_predictions(y_train, y_train_pred, f"CNN Train Predictions (Run ID: {run_id})",
+                     os.path.join(results_dir, f"cnn_train_predictions_{run_id}.png"))
+    plot_predictions(y_test, y_test_pred, f"CNN Test Predictions (Run ID: {run_id})",
+                     os.path.join(results_dir, f"cnn_test_predictions_{run_id}.png"))
+
+    # SHAP Analysis for CNN
+    print("\n--- Performing SHAP Analysis for CARS-CNN ---")
+    # For Keras models, use DeepExplainer or KernelExplainer
+    # DeepExplainer is faster for CNNs, but requires specific layers.
+    # KernelExplainer is more general but slower. We'll use KernelExplainer for robustness.
+
+    # Need a background dataset for KernelExplainer
+    background_data_shap = X_train_scaled[np.random.choice(X_train_scaled.shape[0], min(100, X_train_scaled.shape[0]), replace=False)]
+    
+    # Wrap model.predict to handle potential Keras tensor output to numpy array
+    def cnn_predict_wrapper(x):
+        return model.predict(x).flatten()
+
+    explainer = shap.KernelExplainer(cnn_predict_wrapper, background_data_shap)
+    
+    # Calculate SHAP values for a subset of test data
+    num_shap_samples = min(X_test_scaled.shape[0], 50) 
+    shap_values_test = explainer.shap_values(X_test_scaled[:num_shap_samples])
+
+    # Plot SHAP summary (bar plot)
+    plot_shap_summary(shap_values_test, X_test_scaled[:num_shap_samples], feature_names, "bar",
+                      f"CNN SHAP Feature Importance (Run ID: {run_id})",
+                      os.path.join(results_dir, f"cnn_shap_importance_{run_id}.png"))
+
+    # Plot SHAP summary (dot plot)
+    plot_shap_summary(shap_values_test, X_test_scaled[:num_shap_samples], feature_names, "dot",
+                      f"CNN SHAP Summary (Run ID: {run_id})",
+                      os.path.join(results_dir, f"cnn_shap_summary_{run_id}.png"))
+
+
+def load_config(config_path: str = 'configs/default.yaml'):
+    """Loads configuration from a YAML file."""
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Evaluate spectral modeling models and perform SHAP analysis.")
+    parser.add_argument('--model_type', type=str, required=True, choices=['MLR', 'LSSVM', 'CNN'],
+                        help="Type of model to evaluate (MLR, LSSVM, CNN).")
+    parser.add_argument('--config', type=str, default='configs/default.yaml',
+                        help="Path to the configuration YAML file.")
+    parser.add_argument('--run_id', type=str, default='default',
+                        help="Unique identifier for the model run to load.")
+    args = parser.parse_args()
+
+    config = load_config(args.config)
+    config['run_id'] = args.run_id # Add run_id to config for loading unique files
+
+    # Ensure results directory exists
+    os.makedirs(config['paths']['results'], exist_ok=True)
+
+    if args.model_type == 'MLR':
+        evaluate_mlr(config)
+    elif args.model_type == 'LSSVM':
+        evaluate_lssvm(config)
+    elif args.model_type == 'CNN':
+        evaluate_cnn(config)
+    else:
+        print(f"Unknown model type: {args.model_type}")
