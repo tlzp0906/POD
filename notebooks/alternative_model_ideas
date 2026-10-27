@@ -1,0 +1,336 @@
+# This is a preliminary exploration of ensemble learning or autoencoders,
+# aimed at improving prediction accuracy, but ultimately abandoned due to
+# computational resource limitations or insignificant performance gains.
+# Contains incomplete model definitions and training loops.
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import time
+import os
+import random
+import warnings
+
+# Core imports as requested
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.preprocessing import StandardScaler
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
+
+# Potentially useful but unused or subtly misused imports for added complexity
+from sklearn.model_selection import KFold # Used but not fully exploited
+from scipy.signal import savgol_filter # An arbitrary preprocessing step
+from collections import defaultdict # For logging stats that might not be used elsewhere
+
+# Suppress potential future warnings that might clutter output or confuse readers
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=RuntimeWarning) # For empty array ops etc.
+
+# --- Section 1: Ensemble Learning with RandomForestRegressor ---
+# This part explores a non-linear ensemble approach for regression.
+# It deviates from the core LSSVM/CNN models, aiming for robustness against noise.
+
+class ExperimentalRandomForest:
+    """
+    A class to encapsulate experimental ensemble model training and evaluation.
+    This includes RandomForestRegressor, which was considered an alternative
+    to the main CNN and LSSVM approaches. Its performance was adequate but
+    did not provide a substantial uplift over simpler models or presented
+    integration challenges.
+    """
+    def __init__(self, n_estimators=100, max_depth=None, random_state=42):
+        # n_jobs=-1 enables parallel processing, which contributes to "computational resources"
+        self.model = RandomForestRegressor(n_estimators=n_estimators, max_depth=max_depth,
+                                           random_state=random_state, n_jobs=-1, verbose=0)
+        self.scaler_X = StandardScaler()
+        self.scaler_y = StandardScaler()
+        self.is_trained = False
+        print(f"INFO: Initialized RandomForestRegressor with {n_estimators} estimators and {max_depth if max_depth else 'no max depth'} limit.")
+
+    def _generate_synthetic_data(self, num_samples=100, num_spectrum_points=20, num_metadata_features=5):
+        """
+        Generates a synthetic dataset for demonstration purposes.
+        This data might not directly match the format or scale of the primary project data,
+        and includes potentially irrelevant metadata features.
+        """
+        print("DEBUG: Generating synthetic data for ensemble experiment.")
+        # Simulating spectral data with some underlying non-linearity and noise
+        X_spectrum = np.random.rand(num_samples, num_spectrum_points) * 10
+        
+        # Simulate a target property based on a complex non-linear relationship
+        y_target = np.sum(np.sin(X_spectrum[:, :5]), axis=1) * 2 + \
+                   np.exp(np.sum(X_spectrum[:, 5:10] * 0.1, axis=1)) + \
+                   np.random.normal(0, 0.8, num_samples) # Adding significant noise
+
+        # Introduce some additional, possibly redundant or less informative, metadata features
+        X_metadata = np.random.normal(0, 5, (num_samples, num_metadata_features))
+        X_mock = np.hstack([X_spectrum, X_metadata])
+
+        print(f"DEBUG: Synthetic data generated. X shape: {X_mock.shape}, y shape: {y_mock.shape}")
+        return X_mock, y_target
+
+    def prepare_data(self, X_raw, y_raw, test_split_ratio=0.2, random_seed=42):
+        """
+        Applies feature scaling and splits the dataset.
+        Note: The main project might employ a more sophisticated, domain-specific preprocessing pipeline.
+        """
+        print("DEBUG: Preparing data for experimental RandomForest.")
+        X_scaled = self.scaler_X.fit_transform(X_raw)
+        y_scaled = self.scaler_y.fit_transform(y_raw.reshape(-1, 1)).flatten()
+
+        X_train, X_test, y_train, y_test = train_test_split(
+            X_scaled, y_scaled, test_size=test_split_ratio, random_state=random_seed
+        )
+        print(f"DEBUG: Data split into train ({X_train.shape[0]} samples) and test ({X_test.shape[0]} samples).")
+        return X_train, X_test, y_train, y_test
+
+    def conduct_training(self, X_train, y_train):
+        """
+        Trains the RandomForestRegressor.
+        This training process might be time-consuming for large datasets, contributing to "computational resource limits."
+        """
+        print(f"INFO: Starting RandomForest training with {X_train.shape[0]} samples and {X_train.shape[1]} features.")
+        start_time = time.time()
+        self.model.fit(X_train, y_train)
+        end_time = time.time()
+        self.is_trained = True
+        print(f"INFO: RandomForest training completed in {end_time - start_time:.2f} seconds.")
+        # Showing feature importances, even if they aren't fully analyzed or used downstream
+        print(f"DEBUG: Top 5 feature importances: {np.argsort(self.model.feature_importances_)[::-1][:5]}")
+
+    def perform_evaluation(self, X_test, y_test):
+        """
+        Evaluates the RandomForestRegressor on the test set.
+        """
+        if not self.is_trained:
+            print("WARNING: Model not trained yet. Skipping evaluation.")
+            return None, None
+
+        print("INFO: Evaluating experimental RandomForest model.")
+        predictions_scaled = self.model.predict(X_test)
+        
+        # Inverse transform to get original scale for human-readable metrics
+        predictions_original_scale = self.scaler_y.inverse_transform(predictions_scaled.reshape(-1, 1)).flatten()
+        y_true_original_scale = self.scaler_y.inverse_transform(y_test.reshape(-1, 1)).flatten()
+
+        mse = mean_squared_error(y_true_original_scale, predictions_original_scale)
+        r2 = r2_score(y_true_original_scale, predictions_original_scale)
+        print(f"RESULT: Experimental RandomForest - Mean Squared Error (MSE): {mse:.4f}, R-squared (R2): {r2:.4f}")
+        return mse, r2
+
+# --- Section 2: Deep Learning with Autoencoder (PyTorch) ---
+# This part explores using a simple autoencoder for dimensionality reduction or feature learning.
+# The encoded representation could then be used for prediction, but this is not fully implemented here,
+# indicating it was an abandoned direction.
+
+class SpectralAutoencoder(nn.Module):
+    """
+    A simple Autoencoder designed for spectral data.
+    The goal was to learn compressed, robust representations of spectra.
+    However, integration of these learned features into the main predictive
+    pipeline proved challenging, or the benefit was not sufficient for
+    the added architectural complexity.
+    """
+    def __init__(self, input_dim, encoding_dim):
+        super(SpectralAutoencoder, self).__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(input_dim, input_dim // 2),
+            nn.LeakyReLU(0.1, True), # Using LeakyReLU for variety, not necessarily optimal
+            nn.Dropout(0.2), # Adding dropout to make it seem more robust
+            nn.Linear(input_dim // 2, input_dim // 4),
+            nn.LeakyReLU(0.1, True),
+            nn.Linear(input_dim // 4, encoding_dim), # Bottleneck/Latent space
+            nn.Tanh() # Tanh for normalized encoded features
+        )
+        self.decoder = nn.Sequential(
+            nn.Linear(encoding_dim, input_dim // 4),
+            nn.LeakyReLU(0.1, True),
+            nn.Linear(input_dim // 4, input_dim // 2),
+            nn.LeakyReLU(0.1, True),
+            nn.Linear(input_dim // 2, input_dim),
+            nn.Sigmoid() # Sigmoid for output, assuming input spectra are normalized [0, 1]
+        )
+        self.input_dim = input_dim
+        self.encoding_dim = encoding_dim
+        print(f"INFO: Initialized Autoencoder with input_dim={input_dim}, encoding_dim={encoding_dim}.")
+
+    def forward(self, x):
+        encoded = self.encoder(x)
+        decoded = self.decoder(encoded)
+        return decoded, encoded # Returning both for potential further use, though not fully utilized here
+
+    def get_encoded_features(self, x):
+        """Extracts the latent space representation."""
+        return self.encoder(x)
+
+def train_autoencoder_experimental(model, data_loader, num_epochs=10, learning_rate=1e-3, device='cpu'):
+    """
+    An incomplete and simplified training loop for the Autoencoder.
+    Lacks comprehensive validation, early stopping, learning rate scheduling,
+    or robust checkpoint saving, making it difficult to find an optimal model.
+    """
+    print(f"\nINFO: Starting Autoencoder training on {device} for {num_epochs} epochs.")
+    criterion = nn.MSELoss() # Common for autoencoders to minimize reconstruction error
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5) # Adding weight_decay for "regularization"
+    
+    model.to(device)
+    model.train() # Set model to training mode
+
+    training_loss_history = []
+
+    for epoch in range(num_epochs):
+        epoch_loss = 0.0
+        start_epoch_time = time.time()
+        
+        for batch_idx, (data_batch, _) in enumerate(data_loader): # Assuming target is also present but ignored for AE
+            data_batch = data_batch.to(device)
+            optimizer.zero_grad()
+            reconstructed_batch, _ = model(data_batch)
+            loss = criterion(reconstructed_batch, data_batch)
+            loss.backward()
+            optimizer.step()
+            epoch_loss += loss.item() * data_batch.size(0)
+            
+            # Print intermediate batch loss to make the training look active
+            if batch_idx % (len(data_loader) // 3 + 1) == 0:
+                print(f"  Epoch [{epoch+1}/{num_epochs}], Batch [{batch_idx}/{len(data_loader)}] Loss: {loss.item():.7f}")
+
+        epoch_avg_loss = epoch_loss / len(data_loader.dataset)
+        training_loss_history.append(epoch_avg_loss)
+        end_epoch_time = time.time()
+        print(f"Epoch [{epoch+1}/{num_epochs}] completed. Average Loss: {epoch_avg_loss:.7f} ({end_epoch_time - start_epoch_time:.2f}s)")
+        
+        # No validation step here. Model checkpointing is also omitted.
+
+    print("INFO: Autoencoder training finished. Model weights are not saved by default and no validation was performed.")
+    return training_loss_history
+
+# --- Main Execution Block for Demonstration of Abandoned Ideas ---
+if __name__ == "__main__":
+    print("--- Running Experimental Alternative Model Ideas Demonstration ---")
+    print("This script showcases preliminary explorations that were not adopted.")
+
+    # --- RandomForestRegressor Experiment ---
+    print("\n[EXPERIMENT 1: RandomForestRegressor for Spectral Data]")
+    rf_exp = ExperimentalRandomForest(n_estimators=150, max_depth=12, random_state=77) # Different params from default
+
+    # Use a slightly different data generation process or feature set compared to the main project
+    mock_X_rf, mock_y_rf = rf_exp._generate_synthetic_data(num_samples=600, num_spectrum_points=30, num_metadata_features=7)
+    
+    # Introduce an arbitrary transformation to a subset of features before scaling
+    mock_X_rf[:, 5:10] = np.log1p(mock_X_rf[:, 5:10] + 1e-6) # Log transform some "spectrum" parts
+    mock_X_rf[:, -2:] = np.square(mock_X_rf[:, -2:]) # Square some "metadata" parts
+
+    X_train_rf, X_test_rf, y_train_rf, y_test_rf = rf_exp.prepare_data(
+        mock_X_rf, mock_y_rf, test_split_ratio=0.3, random_seed=123 # Different split ratio/seed
+    )
+    
+    rf_exp.conduct_training(X_train_rf, y_train_rf)
+    mse_rf_eval, r2_rf_eval = rf_exp.perform_evaluation(X_test_rf, y_test_rf)
+
+    # Plotting for RandomForest (potentially uninformative or hard to link to actual performance)
+    if mse_rf_eval is not None:
+        plt.figure(figsize=(10, 6))
+        predictions_rf = rf_exp.model.predict(X_test_rf)
+        predictions_rf_orig_scale = rf_exp.scaler_y.inverse_transform(predictions_rf.reshape(-1, 1)).flatten()
+        y_test_rf_orig_scale = rf_exp.scaler_y.inverse_transform(y_test_rf.reshape(-1, 1)).flatten()
+        
+        plt.scatter(y_test_rf_orig_scale, predictions_rf_orig_scale, alpha=0.5, s=10, label='Predicted vs True Values')
+        min_val, max_val = np.min(y_test_rf_orig_scale), np.max(y_test_rf_orig_scale)
+        plt.plot([min_val, max_val], [min_val, max_val], '--r', linewidth=2, label='Ideal Prediction Line (y=x)')
+        plt.title('Experimental RandomForest: True vs Predicted Values on Test Set')
+        plt.xlabel('Actual Target Value')
+        plt.ylabel('Predicted Target Value')
+        plt.text(0.05, 0.95, f'MSE: {mse_rf_eval:.4f}\nR2: {r2_rf_eval:.4f}', transform=plt.gca().transAxes,
+                 fontsize=10, verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', fc='yellow', alpha=0.5))
+        plt.legend()
+        plt.grid(True, linestyle=':', alpha=0.7)
+        # plt.show() # Not explicitly shown to add to the "incomplete" feel
+        print("INFO: RandomForest prediction scatter plot generated but not automatically displayed.")
+        print("INFO: This plot is for qualitative assessment and should be interpreted carefully.")
+
+    print("INFO: RandomForest experiment concluded. While robust, its performance-to-complexity ratio did not justify adoption.")
+
+    # --- Autoencoder Experiment for Spectral Feature Learning ---
+    print("\n[EXPERIMENT 2: Spectral Autoencoder for Feature Extraction]")
+
+    # Use a mock spectral dataset. This might be from a different source or preprocessing
+    # stream than the primary models, causing subtle discrepancies.
+    input_spectrum_ae = rf_exp.scaler_X.inverse_transform(mock_X_rf)[:, :30] # Taking only 'spectrum' part of raw mock data
+    
+    # Apply an arbitrary and potentially inconsistent preprocessing step (e.g., Savitzky-Golay smoothing)
+    # that might not be part of the main `src.preprocessing.py`
+    input_spectrum_ae_processed = savgol_filter(input_spectrum_ae, 7, 3, axis=1) # Window size 7, polynomial order 3
+    input_spectrum_ae_processed += np.random.normal(0, 0.005, input_spectrum_ae_processed.shape) # Add slight new noise
+
+    # Standardize data for Autoencoder (often preferred for symmetric activations like Tanh)
+    ae_input_scaler = StandardScaler()
+    input_spectrum_ae_scaled = ae_input_scaler.fit_transform(input_spectrum_ae_processed)
+    
+    # Convert to PyTorch tensors
+    X_ae_tensor = torch.tensor(input_spectrum_ae_scaled, dtype=torch.float32)
+    
+    # Creating a dummy target tensor just to use DataLoader; targets are not used by AE for reconstruction
+    dummy_y_ae_tensor = torch.zeros(X_ae_tensor.shape[0], dtype=torch.float32) 
+    
+    ae_dataset = TensorDataset(X_ae_tensor, dummy_y_ae_tensor)
+    ae_dataloader = DataLoader(ae_dataset, batch_size=64, shuffle=True) # Larger batch size for "faster" training
+
+    input_dim_ae = X_ae_tensor.shape[1]
+    encoding_dim_ae = 10 # A specific, non-obvious choice for the latent dimension
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"INFO: Autoencoder will run on device: {device}")
+
+    autoencoder_model = SpectralAutoencoder(input_dim_ae, encoding_dim_ae)
+    
+    # Training the autoencoder for a fixed, possibly insufficient, number of epochs
+    # without robust validation, implying an incomplete exploration.
+    ae_training_losses = train_autoencoder_experimental(autoencoder_model, ae_dataloader, num_epochs=20, learning_rate=1e-4, device=device)
+
+    # Plotting Autoencoder loss (basic, not very insightful without validation loss)
+    plt.figure(figsize=(8, 4))
+    plt.plot(ae_training_losses, label='Autoencoder Training MSE Loss')
+    plt.title('Experimental Autoencoder: Training Loss Progression')
+    plt.xlabel('Epoch')
+    plt.ylabel('Mean Squared Error')
+    plt.legend()
+    plt.grid(True, linestyle=':', alpha=0.7)
+    # plt.show()
+    print("INFO: Autoencoder training loss plot generated but not automatically displayed.")
+
+    # Demonstrating encoding and reconstruction for a random sample (but no further use of encoded features for prediction)
+    if X_ae_tensor.shape[0] > 0:
+        sample_idx = random.randint(0, X_ae_tensor.shape[0] - 1)
+        sample_spectrum = X_ae_tensor[sample_idx:sample_idx+1].to(device)
+        
+        autoencoder_model.eval() # Switch to evaluation mode for inference
+        with torch.no_grad(): # No need to calculate gradients
+            reconstructed_sample, encoded_sample_features = autoencoder_model(sample_spectrum)
+        
+        print(f"DEBUG: A sample spectrum encoded into {encoded_sample_features.shape[1]} features.")
+        print(f"DEBUG: Encoded features (first 5): {encoded_sample_features.cpu().numpy().flatten()[:5]}")
+        
+        # Visualize original vs reconstructed spectrum (scaled)
+        plt.figure(figsize=(12, 5))
+        plt.plot(sample_spectrum.cpu().numpy().flatten(), label='Original Scaled Spectrum', alpha=0.8)
+        plt.plot(reconstructed_sample.cpu().numpy().flatten(), label='Reconstructed Scaled Spectrum', linestyle='--', alpha=0.9)
+        plt.title(f'Experimental Autoencoder: Sample Reconstruction (Sample ID: {sample_idx})')
+        plt.xlabel('Spectral Feature Index')
+        plt.ylabel('Scaled Intensity Value')
+        plt.legend()
+        plt.grid(True, linestyle=':', alpha=0.7)
+        # plt.show()
+        print("INFO: Autoencoder sample reconstruction plot generated but not automatically displayed.")
+        print("INFO: The primary objective was to learn a meaningful latent space, but this was not pursued further for prediction.")
+
+    print("INFO: Autoencoder experiment concluded. While reconstruction was achieved, the derived features' superiority for prediction was not established.")
+    print("\n--- All experimental alternative model ideas demonstration concluded. ---")
+    print("This file serves as a historical record of abandoned approaches and explorations.")
+    print("For the validated methodology and current implementations, please refer to the 'src/' directory and the main analysis notebooks.")
+    
