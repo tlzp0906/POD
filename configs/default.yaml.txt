@@ -1,0 +1,71 @@
+# General project configuration
+project_name: "Spectral Modeling of POD Activity"
+seed: 42 # Random seed for reproducibility
+
+# Paths configuration
+paths:
+  data: "data/sample" # Base path for sample data
+  results: "results"  # Path to save trained models, metrics, and plots
+
+# Preprocessing configuration
+preprocessing:
+  test_size: 0.3 # Proportion of data for testing (70% train, 30% test)
+  smooth:
+    enabled: False # Enable/disable spectral smoothing
+    window_size: 5 # Window size for smoothing (must be odd)
+  baseline_correction:
+    enabled: False # Enable/disable baseline correction
+    method: "als" # Placeholder: 'als', 'polyfit', etc. (requires implementation)
+
+# Data specific configurations for each model's input
+data:
+  path: "data/sample" # Base data path, relative to project root
+  
+  # Configuration for MLR model data (assumes pre-split files)
+  mlr:
+    train_file: "train_mlr.xlsx"
+    test_file: "test_mlr.xlsx"
+    # Column names/indices for features and target in train_mlr.xlsx/test_mlr.xlsx
+    # Assuming 'ID' is column 0, 'POD_Activity' is column 1, and features are columns 2-27.
+    # Adjust these to match your actual data columns.
+    feature_cols: [ 'Wavelength_2', 'Wavelength_3', 'Wavelength_4', 'Wavelength_5', 'Wavelength_6', 
+                    'Wavelength_7', 'Wavelength_8', 'Wavelength_9', 'Wavelength_10', 'Wavelength_11', 
+                    'Wavelength_12', 'Wavelength_13', 'Wavelength_14', 'Wavelength_15', 'Wavelength_16', 
+                    'Wavelength_17', 'Wavelength_18', 'Wavelength_19', 'Wavelength_20', 'Wavelength_21', 
+                    'Wavelength_22', 'Wavelength_23', 'Wavelength_24', 'Wavelength_25', 'Wavelength_26', 
+                    'Wavelength_27'] # These are example names for columns 2-27
+    target_col: "POD_Activity" # Assuming column name for target
+    
+  # Configuration for LSSVM and CNN models data (assumes a single file that gets split)
+  lssvm_cnn:
+    file: "data.xlsx"
+    sheet_name: 0 # Sheet index or name
+    # If None, it takes all columns except target_col_index as features.
+    # If a list of integers, it takes specific column indices.
+    feature_col_indices: null # Example: [0, 1, 2, 3, 4] if specific columns are needed
+    target_col_index: -1 # Column index for target variable (e.g., -1 for last column)
+
+# Model specific configurations
+models:
+  MLR:
+    normalization_method: "standard" # 'standard' or 'minmax'
+    # Other MLR specific params (if any for regularization etc.)
+  
+  LSSVM:
+    normalization_method: "standard" # 'standard' or 'minmax'
+    kernel: "rbf"
+    C: 1.0
+    gamma: "scale" # 'scale' or a float value
+    epsilon: 0.1
+
+  CNN:
+    normalization_method: "minmax" # 'standard' or 'minmax'
+    filters: 128
+    kernel_size: 4
+    dropout_rate: 0.1
+    learning_rate: 0.001
+    epochs: 50
+    batch_size: 32
+    lr_scheduler:
+      factor: 0.1
+      patience: 10 # Reduced patience for faster testing; original was 50
