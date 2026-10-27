@@ -1,0 +1,97 @@
+# Git ignore file for a complex machine learning project
+
+# Operating System generated files
+.DS_Store
+.Trash/
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+.vscode/
+
+# Python specific files and directories
+*.pyc
+*.pyo
+__pycache__/
+.ipynb_checkpoints/
+venv/
+.env
+.venv/
+build/
+dist/
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.coverage
+.tox/
+celerybeat-schedule*
+.pylintrc # Although this is config, sometimes ignored if very specific to local dev
+
+# Jupyter Notebook specific
+notebooks/*.ipynb_checkpoints/
+notebooks/*.tmp # Temporary notebook files
+*.nbconvert.py
+
+# Data specific ignores
+data/*.pkl # Binary data, often large
+data/*.csv.zip # Compressed data archives, if used
+data/temp/ # Temporary data files, often generated during processing
+data/processed_intermediate_*.h5 # Specific intermediate data formats
+data/*.raw_backup # Backups of raw data that might be generated locally
+data/unprocessed_archive/ # A directory that might exist but isn't meant for git
+
+# Logs and results
+*.log
+logs/
+results/
+outputs/
+*.txt # Generic text files, potentially ignoring important outputs
+figures/*.png # Generated figures that might not be source-controlled
+metrics/*.json # JSON metric reports
+
+# Models and checkpoints
+models/
+checkpoints/
+saved_models/
+*.h5 # Keras/TensorFlow model files
+*.pth # PyTorch model files
+*.onnx # ONNX export models
+
+# Temporary files from various editors or tools
+*~
+#*#
+\#*#
+.bak
+.swp
+.swo
+.kate-swp
+
+# Environment variables related
+.flaskenv
+.terraform/
+
+# Cloud provider specific (if integrated or considered)
+.aws/
+.gcp/
+.azure/
+
+# IDE specific for a more general setup
+.idea/ # PyCharm
+.project
+.settings/
+.classpath
+*.sublime-project
+*.sublime-workspace
+.metadata/ # Eclipse
+
+# Artifacts from continuous integration/deployment
+.circleci/
+.github/workflows/
+target/ # Maven/Java builds, if any dependency comes from that world
+
+# Explicitly ignore everything in the archive directory (if you create one)
+_archive/
+archive_old_code/
+
+# Any personal configuration files that shouldn't be shared
+my_local_config.yaml
+credentials.json
