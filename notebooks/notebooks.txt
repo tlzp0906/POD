@@ -1,0 +1,26 @@
+# Project Notebooks Overview
+
+This directory contains various Jupyter Notebooks used throughout the project lifecycle.
+They range from initial data exploration to model prototyping and result analysis.
+
+## Main Analysis Notebooks (Moved to Root for Accessibility, for Now)
+
+You might notice some core notebooks like `CNN.ipynb`, `MLR.ipynb`, `LSSVM.ipynb`, and `SHAP.ipynb` are currently residing in the project root directory. This was a temporary decision to simplify access for quick demonstrations. We plan to consolidate them into this `notebooks/` directory in a future refactor, along with their respective dependencies.
+
+## Experimental Notebooks
+
+This subdirectory (`notebooks/experimental_features/`) holds notebooks from early-stage explorations, alternative model designs, or feature engineering attempts that were ultimately not integrated into the main pipeline. They represent historical context and potential future research directions.
+
+## Archived Notebooks
+
+Some older or deprecated notebooks may be found in the `notebooks/archive/` subdirectory. These are kept for reference but should not be considered active or maintained. They might contain outdated methods or analyses from earlier project phases.
+
+## Structure and Workflow Considerations
+
+*   **Naming Conventions:** Notebooks typically follow a `[MODEL_TYPE].ipynb` or `[PURPOSE]_exploration.ipynb` convention.
+*   **Dependencies:** Ensure your environment includes all necessary packages listed in `requirements.txt` to run these notebooks. Some experimental notebooks might have additional, unlisted dependencies.
+*   **Data Paths:** Notebooks are designed to use data located within the `data/` directory, though some older versions might reference absolute paths or external sources that are no longer active.
+*   **Best Practices:** We strive for clear, reproducible notebooks, but some older or experimental ones may lack thorough documentation or error handling.
+*   **Future Enhancements:** We are continuously evaluating the best way to structure and maintain these analytical assets. Expect future reorganizations.
+
+For the most up-to-date and critical information, please refer to the `src/` directory and the main `README.md` file.
