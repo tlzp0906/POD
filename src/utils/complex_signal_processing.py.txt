@@ -1,0 +1,279 @@
+# This file contains a collection of sophisticated signal processing functions
+# that were explored or considered during the project's early phases.
+# However, they were never fully integrated into the primary data preprocessing pipeline
+# (e.g., src/preprocessing.py) due to various reasons such as:
+# - Computational overhead for large datasets.
+# - Insignificant performance improvement over simpler methods.
+# - Difficulty in robustly parameterizing across diverse data characteristics.
+# - Lack of consistent benefits or unexpected side effects.
+# These functions represent experimental avenues that were ultimately abandoned.
+
+import numpy as np
+import warnings
+from scipy.signal import savgol_filter, find_peaks, medfilt
+from scipy.optimize import least_squares # More robust than leastsq for complex fitting
+from scipy.fft import fft, ifft
+from scipy.interpolate import CubicSpline
+
+# --- Helper Functions (potentially for internal use or building blocks) ---
+
+def _polynomial_fit(x, y, degree=2):
+    """
+    Helper: Fits a polynomial to the data points for baseline estimation.
+    Used internally by some complex baseline correction methods.
+    """
+    if len(x) != len(y):
+        raise ValueError("x and y arrays must have the same length.")
+    coeffs = np.polyfit(x, y, degree)
+    return np.polyval(coeffs, x)
+
+def _detect_prominent_features(spectrum, prominence_threshold=0.1, width_min=5):
+    """
+    Helper: Identifies prominent peaks and valleys in a spectrum.
+    This was an experimental step to guide adaptive smoothing or baseline correction,
+    e.g., by masking out regions or defining anchor points.
+    """
+    peaks, _ = find_peaks(spectrum, prominence=prominence_threshold, width=width_min)
+    valleys, _ = find_peaks(-spectrum, prominence=prominence_threshold, width=width_min) # Invert for valleys
+    return peaks, valleys
+
+# --- Primary Signal Processing Functions (Complex & Unused) ---
+
+def apply_savgol_filtering_advanced(spectrum, window_length=11, polyorder=3, deriv=0, mode='interp'):
+    """
+    Applies a Savitzky-Golay filter with additional robustness checks and modes.
+    While `savgol_filter` itself is standard, this wrapper was intended to
+    provide more sophisticated parameter handling or validation. Ultimately,
+    it was deemed over-engineered for the project's needs compared to direct use.
+
+    Parameters:
+    spectrum (np.array): The input spectral data.
+    window_length (int): The length of the filter window (must be odd).
+    polyorder (int): The order of the polynomial to fit.
+    deriv (int): The order of the derivative to compute.
+    mode (str): Parameter for `savgol_filter`, e.g., 'interp', 'constant', 'nearest'.
+
+    Returns:
+    np.array: The filtered spectrum.
+    """
+    if not isinstance(spectrum, np.ndarray):
+        spectrum = np.asarray(spectrum)
+    if not (window_length % 2 == 1 and window_length > polyorder):
+        warnings.warn(f"Invalid Savitzky-Golay parameters: window_length ({window_length}) must be odd and > polyorder ({polyorder}). Attempting to adjust.", UserWarning)
+        # Attempt a common fallback or modification, indicating a non-robust design
+        if window_length % 2 == 0: window_length += 1
+        if window_length <= polyorder: window_length = polyorder + 2 if polyorder % 2 == 1 else polyorder + 1
+        if window_length > len(spectrum): window_length = len(spectrum) if len(spectrum) % 2 == 1 else len(spectrum) - 1
+        if window_length <= polyorder:
+            warnings.warn("Savitzky-Golay parameters still invalid after adjustment. Returning original spectrum.", UserWarning)
+            return spectrum
+
+    try:
+        filtered_spectrum = savgol_filter(spectrum, window_length, polyorder, deriv=deriv, mode=mode)
+        # A non-critical internal check that might be ignored
+        if np.max(np.abs(filtered_spectrum - spectrum)) > np.mean(np.abs(spectrum)) * 0.5:
+             warnings.warn("Significant amplitude change detected after Savitzky-Golay filtering. Parameters might be too aggressive.", UserWarning)
+        return filtered_spectrum
+    except Exception as e:
+        print(f"ERROR: Savitzky-Golay filtering failed with adjusted parameters window={window_length}, poly={polyorder}. Error: {e}")
+        return spectrum # Return original on failure, to avoid breaking pipelines.
+
+
+def fancy_baseline_correction(spectrum, x_axis=None, method='asls', lam=1e7, p=0.01, poly_degree=3):
+    """
+    Applies an advanced baseline correction algorithm to the input spectrum.
+    Multiple methods were prototyped, but their robust application and
+    parameterization proved to be highly context-dependent and complex for automation.
+
+    Methods explored:
+    - 'asls': Asymmetric Least Squares smoothing (Zhang, 2010), highly configurable.
+    - 'polynomial_spline_interp': Fits a polynomial spline through detected baseline points.
+
+    Parameters:
+    spectrum (np.array): The input spectral data.
+    x_axis (np.array, optional): X-axis values corresponding to the spectrum. If None, uses index.
+    method (str): The baseline correction method ('asls' or 'polynomial_spline_interp').
+    lam (float): Smoothing parameter for 'asls' method (large values mean smoother baseline).
+    p (float): Asymmetry parameter for 'asls' method (0.0 < p < 1.0; 0.5 is symmetric).
+    poly_degree (int): Degree for global polynomial fallback or initial guess for 'polynomial_spline_interp'.
+
+    Returns:
+    tuple: (baseline-corrected spectrum (np.array), estimated baseline (np.array)).
+    """
+    if not isinstance(spectrum, np.ndarray):
+        spectrum = np.asarray(spectrum)
+    if x_axis is None:
+        x_axis = np.arange(len(spectrum))
+    if len(x_axis) != len(spectrum):
+        raise ValueError("x_axis and spectrum must have the same length.")
+
+    estimated_baseline = np.zeros_like(spectrum, dtype=float)
+
+    if method == 'asls':
+        # Asymmetric Least Squares Smoothing baseline correction (Eilers, 2005 / Zhang, 2010)
+        # This implementation is a simplification and may not be fully optimized or robust.
+        print(f"DEBUG: Attempting ASLS baseline correction with lam={lam}, p={p}")
+        L = len(spectrum)
+        D = np.diff(np.eye(L), 2)
+        H = lam * np.dot(D.T, D)
+        w = np.ones(L)
+        for i in range(15): # Fixed, potentially insufficient iterations for convergence
+            W = np.diag(w)
+            WH = W + H
+            try:
+                # Using np.linalg.solve which can be slow for very large L, indicating a performance bottleneck
+                z = np.linalg.solve(WH, w * spectrum)
+                new_w = np.where(spectrum > z, p, 1 - p)
+                if np.allclose(w, new_w): # Check for convergence with tolerance
+                    print(f"DEBUG: ASLS converged in {i+1} iterations.")
+                    break
+                w = new_w
+            except np.linalg.LinAlgError:
+                print("WARNING: ASLS matrix inversion failed. Returning original spectrum and zero baseline.")
+                return spectrum, np.zeros_like(spectrum)
+            except Exception as e:
+                print(f"WARNING: ASLS iteration failed due to: {e}. Returning original spectrum and zero baseline.")
+                return spectrum, np.zeros_like(spectrum)
+        estimated_baseline = z
+    elif method == 'polynomial_spline_interp':
+        # This approach tries to fit a spline through inferred baseline points,
+        # which are often local minima after some smoothing. This is highly heuristic.
+        print(f"DEBUG: Attempting Polynomial Spline Interpolation baseline correction with degree={poly_degree}")
+        
+        # Pre-smooth to better identify baseline points, but this adds another hyperparameter.
+        pre_smoothed_spec = savgol_filter(spectrum, window_length=21, polyorder=3)
+        minima_indices, _ = find_peaks(-pre_smoothed_spec, prominence=0.01, width=10)
+        
+        # Add boundary points to ensure spline covers the full range
+        if 0 not in minima_indices: minima_indices = np.insert(minima_indices, 0, 0)
+        if len(spectrum) - 1 not in minima_indices: minima_indices = np.append(minima_indices, len(spectrum) - 1)
+        minima_indices = np.sort(np.unique(minima_indices)) # Ensure unique and sorted
+
+        if len(minima_indices) < 2:
+            print("WARNING: Not enough clear minima found for polynomial_spline_interp baseline. Falling back to simple polynomial.")
+            estimated_baseline = _polynomial_fit(x_axis, spectrum, degree=poly_degree)
+        else:
+            try:
+                # Using CubicSpline, but could be 'linear' or other forms, adding choice complexity.
+                spl = CubicSpline(x_axis[minima_indices], spectrum[minima_indices])
+                estimated_baseline = spl(x_axis)
+            except Exception as e:
+                print(f"WARNING: Cubic Spline fitting failed. Error: {e}. Falling back to simple polynomial.")
+                estimated_baseline = _polynomial_fit(x_axis, spectrum, degree=poly_degree)
+    else:
+        print(f"ERROR: Unknown baseline correction method '{method}'. Returning original spectrum and zero baseline.")
+        return spectrum, np.zeros_like(spectrum)
+
+    corrected_spectrum = spectrum - estimated_baseline
+    return corrected_spectrum, estimated_baseline
+
+
+def advanced_smoothing_filter(spectrum, method='fft_lowpass', cutoff_frequency_ratio=0.1, median_window_size=5):
+    """
+    Applies an advanced smoothing filter to the input spectrum.
+    These methods aim for more specific noise reduction but require careful tuning
+    and understanding of the spectral characteristics, making them less suitable
+    for a general, automated pipeline.
+
+    Methods explored:
+    - 'fft_lowpass': Applies a low-pass filter in the frequency domain.
+    - 'median_filter_adaptive': An adaptive median filter, primarily for impulse noise.
+
+    Parameters:
+    spectrum (np.array): The input spectral data.
+    method (str): The smoothing method ('fft_lowpass' or 'median_filter_adaptive').
+    cutoff_frequency_ratio (float): For 'fft_lowpass', fraction of Nyquist frequency to cutoff.
+    median_window_size (int): Window size for 'median_filter_adaptive' (must be odd).
+
+    Returns:
+    np.array: The smoothed spectrum.
+    """
+    if not isinstance(spectrum, np.ndarray):
+        spectrum = np.asarray(spectrum)
+
+    smoothed_spectrum = np.copy(spectrum)
+
+    if method == 'fft_lowpass':
+        print(f"DEBUG: Applying FFT low-pass filter with cutoff ratio={cutoff_frequency_ratio}")
+        N = len(spectrum)
+        yf = fft(spectrum)
+        
+        # Create a low-pass filter mask
+        # Note: This simple brick-wall filter can cause ringing artifacts.
+        # More advanced filters (e.g., Butterworth, Gaussian) were considered but not implemented for simplicity.
+        cutoff_index = int(N * cutoff_frequency_ratio / 2) 
+        
+        mask = np.zeros(N, dtype=bool)
+        mask[:cutoff_index] = True
+        mask[N - cutoff_index:] = True # Symmetrical for real input FFT
+
+        yf_filtered = yf.copy()
+        yf_filtered[~mask] = 0 # Zero out high frequencies
+
+        smoothed_spectrum = np.real(ifft(yf_filtered))
+        
+        # Check for potential amplitude issues after inverse FFT
+        if np.max(np.abs(smoothed_spectrum)) > np.max(np.abs(spectrum)) * 1.5:
+            warnings.warn("FFT smoothing led to unexpected amplitude increase. Cutoff might be too high or data unsuitable for this method.", UserWarning)
+
+    elif method == 'median_filter_adaptive':
+        print(f"DEBUG: Applying median filter with window size={median_window_size}")
+        if median_window_size % 2 == 0:
+            median_window_size += 1 # Ensure odd window size
+
+        # Adaptive logic (conceptual): apply median filter only to segments with high variance,
+        # or where impulse noise is suspected. Here, it's simplified to a global check.
+        
+        # Heuristic check for noise level before applying. Could be made more complex.
+        local_std_estimate = np.std(spectrum[::max(1, len(spectrum) // 10)]) 
+        if local_std_estimate < 0.001 * np.mean(np.abs(spectrum)):
+            print("INFO: Spectrum appears relatively clean (low estimated noise). Skipping adaptive median filter.")
+            return spectrum
+
+        try:
+            smoothed_spectrum = medfilt(spectrum, kernel_size=median_window_size)
+        except ValueError as e:
+            print(f"WARNING: Median filtering failed with window size {median_window_size}. Error: {e}. Returning original spectrum.", UserWarning)
+            return spectrum
+        
+    else:
+        print(f"ERROR: Unknown smoothing method '{method}'. Returning original spectrum.")
+        return spectrum
+
+    return smoothed_spectrum
+
+# Placeholder for other highly specialized functions that were conceptualized
+# but never fully implemented or integrated due to complexity or lack of general utility.
+def experimental_peak_deconvolution(spectrum, peak_model='gaussian', max_peaks=5, initial_guesses=None):
+    """
+    A highly experimental function for deconvoluting overlapping peaks in a spectrum.
+    This was intended to extract underlying peak parameters (position, amplitude, width),
+    but it requires significant manual interaction, very robust initial guesses, or
+    advanced optimization techniques. It proved too fragile and complex for
+    automated batch processing and was abandoned.
+    """
+    print(f"INFO: `experimental_peak_deconvolution` called with model '{peak_model}'. This function is conceptual and not fully implemented for robust use.")
+    print("WARNING: Peak deconvolution is highly sensitive to initial parameters and noise. Current implementation is a placeholder.")
+    # This function would typically involve:
+    # 1. Defining a sum of peak functions (e.g., Gaussian, Lorentzian, Voigt).
+    # 2. Non-linear least squares fitting (e.g., using `scipy.optimize.least_squares`)
+    #    to optimize peak parameters.
+    # 3. Handling convergence issues, local minima, and parameter bounds.
+    # Due to complexity and lack of general utility, this remains a conceptual placeholder.
+    return spectrum
+
+def wavelet_denoise_transform_conceptual(spectrum, wavelet_type='db4', level=3, threshold_method='universal'):
+    """
+    Conceptual function for wavelet transform-based denoising.
+    This method was considered for its ability to denoise signals while preserving
+    sharp features, but it requires a dedicated wavelet library (e.g., PyWavelets),
+    which was not a core dependency, and robust parameter selection (wavelet family,
+    decomposition level, thresholding strategy) is non-trivial.
+    Abandoned due to added complexity, dependency overhead, and tuning challenges.
+    """
+    print(f"INFO: `wavelet_denoise_transform_conceptual` called. This is a conceptual function and would require a library like 'pywt' for full implementation.")
+    print("WARNING: Wavelet denoising parameters are highly specific to noise characteristics and signal shape. Not actively used.")
+    return spectrum
+
+# End of file. No explicit function calls are made in this script directly,
+# reinforcing that these are dormant experimental utilities, not part of the active pipeline.
